@@ -17,6 +17,68 @@
 
 import Foundation
 
+public struct SizedCanvas<Symbols> where Symbols: View {
+public var symbols: Symbols
+  public var renderer: (inout GraphicsContext, CGSize) -> ()
+  public var isOpaque: Bool
+  public var colorMode: ColorRenderingMode
+  public var rendersAsynchronously: Bool
+  public var size: CGSize
+
+  @Environment(\.self) public var _environment: EnvironmentValues
+  public func _makeContext(
+    onOperation: @escaping (GraphicsContext._Storage, GraphicsContext._Storage._Operation) -> (),
+    imageResolver: @escaping (Image, EnvironmentValues) -> GraphicsContext.ResolvedImage,
+    textResolver: @escaping (Text, EnvironmentValues) -> GraphicsContext.ResolvedText,
+    symbolResolver: @escaping (AnyHashable, AnyView, EnvironmentValues) -> GraphicsContext
+      .ResolvedSymbol
+  ) -> GraphicsContext {
+    .init(_storage: .init(
+      in: _environment,
+      with: onOperation,
+      imageResolver: imageResolver,
+      textResolver: textResolver,
+      symbols: AnyView(symbols),
+      symbolResolver: symbolResolver
+    ))
+  }
+
+  public init(
+    opaque: Bool = false,
+    colorMode: ColorRenderingMode = .nonLinear,
+    rendersAsynchronously: Bool = false,
+    renderer: @escaping (inout GraphicsContext, CGSize) -> (),
+    size: CGSize,
+    @ViewBuilder symbols: () -> Symbols
+  ) {
+    isOpaque = opaque
+    self.colorMode = colorMode
+    self.rendersAsynchronously = rendersAsynchronously
+    self.renderer = renderer
+    self.symbols = symbols()
+    self.size = size
+  }
+}
+
+extension SizedCanvas: _PrimitiveView {}
+
+public extension SizedCanvas where Symbols == EmptyView {
+  init(
+    opaque: Bool = false,
+    colorMode: ColorRenderingMode = .nonLinear,
+    rendersAsynchronously: Bool = false,
+    renderer: @escaping (inout GraphicsContext, CGSize) -> (),
+    size: CGSize
+  ) {
+    isOpaque = opaque
+    self.colorMode = colorMode
+    self.rendersAsynchronously = rendersAsynchronously
+    self.renderer = renderer
+    self.size = size
+    symbols = EmptyView()
+  }
+}
+
 public struct Canvas<Symbols> where Symbols: View {
   public var symbols: Symbols
   public var renderer: (inout GraphicsContext, CGSize) -> ()

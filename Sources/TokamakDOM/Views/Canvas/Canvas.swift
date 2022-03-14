@@ -32,7 +32,169 @@ extension Canvas: SpacerContainer {
   public var fillCrossAxis: Bool { true }
 }
 
+extension SizedCanvas: DOMPrimitive {
+  public var renderedBody: AnyView {
+    AnyView(_SizedCanvas(parent: self))
+  }
+}
+
+extension SizedCanvas: SpacerContainer {
+  public var hasSpacer: Bool { true }
+  public var axis: SpacerContainerAxis { .vertical }
+  public var fillCrossAxis: Bool { true }
+}
+
 private let devicePixelRatio = JSObject.global.devicePixelRatio.number ?? 1
+
+struct _SizedCanvas<Symbols: View>: View {
+  let parent: SizedCanvas<Symbols>
+  @StateObject private var coordinator = Coordinator()
+  @Environment(\.inAnimatingTimelineView) private var inAnimatingTimelineView
+  @Environment(\.isAnimatingTimelineViewPaused) private var isAnimatingTimelineViewPaused
+
+  final class Coordinator: ObservableObject {
+    @Published var canvas: JSObject?
+    var currentDrawLoop: JSValue?
+
+    /// A cache of resolved symbols by their tag.
+    /// This allows symbols to be used in an animated canvas.
+    var symbolCache: [AnyHashable: JSObject] = [:]
+  }
+
+  func cacheSymbol(id: AnyHashable, _ img: JSObject) {
+    coordinator.symbolCache[id] = img
+  }
+
+  func cachedSymbol(id: AnyHashable) -> JSObject? {
+    coordinator.symbolCache[id]
+  }
+
+  var body: some View {
+    HTML("canvas", [
+      "style": "width: \(self.parent.size.width)px; height: \(self.parent.size.height)px;",
+    ])
+    ._domRef($coordinator.canvas)
+    .onAppear { draw(in: self.parent.size) }
+    ._onUpdate {
+      // Cancel the previous animation loop.
+      if let currentDrawLoop = coordinator.currentDrawLoop {
+        _ = JSObject.global.cancelAnimationFrame!(currentDrawLoop)
+      }
+      draw(in: self.parent.size)
+    }
+  }
+
+  private func draw(in size: CGSize) {
+    guard let canvas = coordinator.canvas,
+          let canvasContext = canvas.getContext!("2d").object
+    else { return }
+    // Setup the canvas size
+    canvas.width = .number(Double(size.width * CGFloat(devicePixelRatio)))
+    canvas.height = .number(Double(size.height * CGFloat(devicePixelRatio)))
+    // Restore the initial state.
+    _ = canvasContext.restore!()
+    // Clear the canvas.
+    _ = canvasContext.clearRect!(0, 0, canvas.width, canvas.height)
+    // Save the cleared state for the next redraw to restore.
+    _ = canvasContext.save!()
+    // Scale for retina displays
+    _ = canvasContext.scale!(devicePixelRatio, devicePixelRatio)
+    // Create a fresh context.
+    var graphicsContext = parent._makeContext(
+      onOperation: { storage, operation in
+        handleOperation(storage, operation, in: canvasContext)
+      },
+      imageResolver: resolveImage,
+      textResolver: resolveText(in: canvasContext),
+      symbolResolver: resolveSymbol
+    )
+    // Render into the context.
+    parent.renderer(&graphicsContext, size)
+    if inAnimatingTimelineView && !isAnimatingTimelineViewPaused {
+      coordinator.currentDrawLoop = JSObject.global.requestAnimationFrame!(JSOneshotClosure { _ in
+        draw(in: size)
+        return .undefined
+      })
+    }
+  }
+
+  private func handleOperation(
+    _ storage: GraphicsContext._Storage,
+    _ operation: GraphicsContext._Storage._Operation,
+    in canvasContext: JSObject
+  ) {
+    canvasContext.globalCompositeOperation = .string(storage.blendMode.cssValue)
+    switch operation {
+    case let .clip(path, _, _):
+      clip(to: path, in: canvasContext)
+    case .beginClipLayer:
+      _ = canvasContext.save!()
+    case .endClipLayer:
+      _ = canvasContext.restore!()
+      _ = canvasContext.clip!()
+    case let .addFilter(filter, _):
+      applyFilter(filter, to: canvasContext)
+    case .beginLayer:
+      _ = canvasContext.save!()
+    case .endLayer:
+      _ = canvasContext.restore!()
+    case let .fill(path, shading, fillStyle):
+      fillPath(path, with: shading, style: fillStyle, in: canvasContext)
+    case let .stroke(path, shading, strokeStyle):
+      strokePath(path, with: shading, style: strokeStyle, in: canvasContext)
+    case let .drawImage(image, positioning, style):
+      drawImage(image, at: positioning, with: style, in: canvasContext)
+    case let .drawText(text, positioning):
+      drawText(text, at: positioning, in: canvasContext)
+    case let .drawSymbol(symbol, positioning):
+      drawSymbol(symbol, at: positioning, in: canvasContext)
+    }
+  }
+
+  private func applyFilter(_ filter: GraphicsContext.Filter, to canvasContext: JSObject) {
+    let previousFilter = canvasContext.filter
+      .string == "none" ? "" : (canvasContext.filter.string ?? "")
+    switch filter._storage {
+    case let .projectionTransform(matrix):
+      _ = canvasContext.transform!(
+        Double(matrix.m11), Double(matrix.m12),
+        Double(matrix.m21), Double(matrix.m22),
+        Double(matrix.m31), Double(matrix.m32)
+      )
+    case let .shadow(color, radius, x, y, _, _):
+      canvasContext
+        .shadowColor = .string(
+          _ColorProxy(color).resolve(in: parent._environment)
+            .cssValue
+        )
+      canvasContext.shadowBlur = .number(Double(radius))
+      canvasContext.shadowOffsetX = .number(Double(x))
+      canvasContext.shadowOffsetY = .number(Double(y))
+    case .colorMultiply:
+      break
+    case .colorMatrix:
+      break
+    case let .hueRotation(angle):
+      canvasContext.filter = .string("\(previousFilter) hue-rotate(\(angle.radians)rad)")
+    case let .saturation(amount):
+      canvasContext.filter = .string("\(previousFilter) saturate(\(amount * 100)%)")
+    case let .brightness(amount):
+      canvasContext.filter = .string("\(previousFilter) brightness(\(amount * 100)%)")
+    case let .contrast(amount):
+      canvasContext.filter = .string("\(previousFilter) contrast(\(amount * 100)%)")
+    case let .colorInvert(amount):
+      canvasContext.filter = .string("\(previousFilter) invert(\(amount * 100)%)")
+    case let .grayscale(amount):
+      canvasContext.filter = .string("\(previousFilter) grayscale(\(amount * 100)%)")
+    case .luminanceToAlpha:
+      break
+    case let .blur(radius, _):
+      canvasContext.filter = .string("\(previousFilter) blur(\(radius)px)")
+    case .alphaThreshold:
+      break
+    }
+  }
+}
 
 struct _Canvas<Symbols: View>: View {
   let parent: Canvas<Symbols>

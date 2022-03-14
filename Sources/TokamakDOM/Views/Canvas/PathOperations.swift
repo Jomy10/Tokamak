@@ -19,6 +19,98 @@ import Foundation
 import JavaScriptKit
 import TokamakCore
 
+extension _SizedCanvas {
+  func clip(to path: Path, in canvasContext: JSObject) {
+    _ = canvasContext.beginPath!()
+    pushPath(path, in: canvasContext)
+    _ = canvasContext.closePath!()
+    _ = canvasContext.clip!()
+  }
+
+  func fillPath(
+    _ path: Path,
+    with shading: GraphicsContext.Shading,
+    style fillStyle: FillStyle,
+    in canvasContext: JSObject
+  ) {
+    _ = canvasContext.save!()
+    _ = canvasContext.beginPath!()
+    pushPath(path, in: canvasContext)
+    _ = canvasContext.closePath!()
+    canvasContext.fillStyle = shading.cssValue(
+      in: parent._environment,
+      with: canvasContext,
+      bounds: path.boundingRect
+    )
+    _ = canvasContext.fill!(fillStyle.isEOFilled ? "evenodd" : "nonzero")
+    _ = canvasContext.restore!()
+  }
+
+  func strokePath(
+    _ path: Path,
+    with shading: GraphicsContext.Shading,
+    style strokeStyle: StrokeStyle,
+    in canvasContext: JSObject
+  ) {
+    _ = canvasContext.save!()
+    _ = canvasContext.beginPath!()
+    pushPath(path, in: canvasContext)
+    _ = canvasContext.closePath!()
+    canvasContext.strokeStyle = shading.cssValue(
+      in: parent._environment,
+      with: canvasContext,
+      bounds: path.boundingRect
+    )
+    canvasContext.lineWidth = .number(Double(strokeStyle.lineWidth))
+    _ = canvasContext.stroke!()
+    _ = canvasContext.restore!()
+  }
+
+  private func pushPath(_ path: Path, in canvasContext: JSObject) {
+    switch path.storage {
+    case .empty: break
+    case let .rect(rect):
+      rect.pushRect(to: canvasContext)
+    case let .ellipse(rect):
+      rect.pushEllipse(to: canvasContext)
+    case let .roundedRect(rect):
+      rect.push(to: canvasContext)
+    case let .path(box):
+      for element in box.elements {
+        switch element {
+        case let .move(point):
+          _ = canvasContext.moveTo!(Double(point.x), Double(point.y))
+        case let .line(point):
+          _ = canvasContext.lineTo!(Double(point.x), Double(point.y))
+        case let .quadCurve(endPoint, controlPoint):
+          _ = canvasContext.quadraticCurveTo!(
+            Double(controlPoint.x),
+            Double(controlPoint.y),
+            Double(endPoint.x),
+            Double(endPoint.y)
+          )
+        case let .curve(endPoint, control1, control2):
+          _ = canvasContext.bezierCurveTo!(
+            Double(control1.x),
+            Double(control1.y),
+            Double(control2.x),
+            Double(control2.y),
+            Double(endPoint.x),
+            Double(endPoint.y)
+          )
+        case .closeSubpath:
+          _ = canvasContext.closePath!() // Close the path.
+          _ = canvasContext.beginPath!() // Reopen for the next segments.
+        }
+      }
+    case let .stroked(stroked):
+      pushPath(stroked.path, in: canvasContext)
+    case let .trimmed(trimmed):
+      pushPath(trimmed.path, in: canvasContext) // TODO: Find a way to trim a Path2D
+    }
+  }
+}
+
 extension _Canvas {
   func clip(to path: Path, in canvasContext: JSObject) {
     _ = canvasContext.beginPath!()

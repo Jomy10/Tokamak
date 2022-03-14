@@ -21,6 +21,9 @@ DerivedData
 .swiftpm/xcode
 *.xcodeproj
 
+# VS Code
+.vscode
+
 # Bundler
 .bundle
 

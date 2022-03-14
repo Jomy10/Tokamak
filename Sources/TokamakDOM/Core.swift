@@ -140,6 +140,7 @@ public typealias VerticalAlignment = TokamakCore.VerticalAlignment
 public typealias Alignment = TokamakCore.Alignment
 public typealias Button = TokamakCore.Button
 public typealias Canvas = TokamakCore.Canvas
+public typealias SizedCanvas = TokamakCore.SizedCanvas
 public typealias ControlGroup = TokamakCore.ControlGroup
 public typealias ControlSize = TokamakCore.ControlSize
 public typealias DatePicker = TokamakCore.DatePicker
